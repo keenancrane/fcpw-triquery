@@ -35,6 +35,17 @@ bool found = scene.findClosestPoint(queryPoint, interaction);
 
 The `Scene` class is templated on dimension, which enables it to work with geometric data in any dimension as long as primitives are defined for the dimension of interest. In addition to triangles in 3D, *FCPW* also provides support for line segments in 2D. The [Interaction](https://github.com/rohan-sawhney/fcpw/blob/master/include/fcpw/core/interaction.h) class stores information relevant to the query, such as the distance to and closest point on the primitive.
 
+*FCPW* also supports triangle-to-mesh distance queries in 3D, which compute the closest points between a query triangle and the mesh:
+
+```c++
+// perform a triangle-to-mesh distance query
+Vector3 closestPointOnQuery;
+bool found = scene.findClosestPointToTriangle(a, b, c, interaction, &closestPointOnQuery);
+
+// interaction.p contains the closest point on the mesh
+// closestPointOnQuery contains the closest point on the query triangle
+```
+
 If your scene consists of multiple objects with the same type of primitives (e.g. triangles), it is better to "flatten" those objects into a single object (with a list of `positions` and `indices`). *FCPW* then builds a single acceleration structure over all primitives in the scene. If multiple objects are loaded, *FCPW* instead builds a hierarchy of acceleration structures, with a structure for each object in the scene.
 
 Refer to [demo.cpp](https://github.com/rohan-sawhney/fcpw/blob/master/demos/demo.cpp) for a complete demo, and [fcpw.h](https://github.com/rohan-sawhney/fcpw/blob/master/include/fcpw/fcpw.h) for the full API, which includes the list of supported geometric queries, heuristrics for constructing the accerlation structure, as well as support for refitting, instancing and CSG operations. Details regarding GPU support and installation are provided below.
@@ -148,8 +159,10 @@ git clone --recurse-submodules https://github.com/nmwsharp/polyscope.git deps/po
 
 The C++ demo can be run from the `build` directory with the command:
 ```
-./demos/demo [--useGpu]
+./demos/demo [--useGpu] [--triangleQuery]
 ```
+
+The `--triangleQuery` flag visualizes triangle-to-mesh distance queries.
 
 For CPU vectorization, Enoki is included by default as a submodule. It can be disabled with the command `-DFCPW_USE_ENOKI=OFF`, in which case *FCPW* falls back to [Eigen](http://eigen.tuxfamily.org/index.php?title=Main_Page) for non-vectorized CPU queries.
 

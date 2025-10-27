@@ -1,6 +1,7 @@
 #pragma once
 
 #include <fcpw/utilities/scene_data.h>
+#include <unsupported/Eigen/CXX11/Tensor>
 
 namespace fcpw {
 
@@ -168,8 +169,8 @@ public:
                                     Interaction<DIM>& i, Vector3 *q=nullptr,
                                     float squaredMaxRadius=maxFloat, bool recordNormal=false) const;
 
-    // batched version: triangles is an Nx3x3 matrix (rows: triangles, 3 vertices each)
-    void findClosestPointsToTriangles(const Eigen::TensorFixedSize<float, Eigen::Sizes<-1,3,3>>& triangles,
+    // batched version: triangles is an Nx3x3 tensor (rows: triangles, 3 vertices each)
+    void findClosestPointsToTriangles(const Eigen::Tensor<float, 3>& triangles,
                                       const Eigen::VectorXf& squaredMaxRadii,
                                       std::vector<Interaction<DIM>>& interactions,
                                       std::vector<Vector3>* qs=nullptr,

@@ -9,7 +9,7 @@
     > cd build
     > cmake -DFCPW_BUILD_DEMO=ON [-DFCPW_ENABLE_GPU_SUPPORT=ON] ..
     > make -j4
-    > ./demos/demo [--useGpu]
+    > ./demos/demo [--useGpu] [--triangleQuery]
 */
 
 #include <fcpw/fcpw.h>
@@ -186,6 +186,37 @@ void performClosestPointQueries(const std::vector<Vector<3>>& queryPoints,
 #endif
 
 template <typename T>
+void performTriangleQueries(const std::vector<std::array<Vector<3>, 3>>& queryTriangles,
+                           std::vector<Vector<3>>& closestPointsOnMesh,
+                           std::vector<Vector<3>>& closestPointsOnTriangles,
+                           T& scene)
+{
+    // do nothing
+}
+
+template <>
+void performTriangleQueries(const std::vector<std::array<Vector<3>, 3>>& queryTriangles,
+                           std::vector<Vector<3>>& closestPointsOnMesh,
+                           std::vector<Vector<3>>& closestPointsOnTriangles,
+                           Scene<3>& scene)
+{
+    // perform triangle queries
+    closestPointsOnMesh.clear();
+    closestPointsOnTriangles.clear();
+    
+    for (const auto& tri : queryTriangles) {
+        Interaction<3> interaction;
+        Vector3 closestOnQuery;
+        bool found = scene.findClosestPointToTriangle(tri[0], tri[1], tri[2], 
+                                                      interaction, &closestOnQuery);
+        if (found) {
+            closestPointsOnMesh.emplace_back(interaction.p);
+            closestPointsOnTriangles.emplace_back(closestOnQuery);
+        }
+    }
+}
+
+template <typename T>
 void guiCallback(std::vector<Vector<3>>& queryPoints,
                  std::vector<Vector<3>>& closestPoints,
                  T& scene)
@@ -215,6 +246,66 @@ void guiCallback(std::vector<Vector<3>>& queryPoints,
 }
 
 template <typename T>
+void guiCallbackTriangles(std::vector<std::array<Vector<3>, 3>>& queryTriangles,
+                         std::vector<Vector<3>>& closestPointsOnMesh,
+                         std::vector<Vector<3>>& closestPointsOnTriangles,
+                         T& scene)
+{
+    // get current system time (in seconds) as a double
+    double time = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+    // animate query triangles (translate them slightly)
+    static Vector3 translation = Vector3::Zero();
+    translation[0] = 0.001f * std::sin(time);
+    translation[1] = 0.001f * std::cos(time);
+    translation[2] = 0.001f * std::cos(2.*time);
+
+    for (auto& tri : queryTriangles) {
+        Vector3 center = (tri[0] + tri[1] + tri[2]) / 3.0f;
+        for (int i = 0; i < 3; i++) {
+            Vector3 offset = tri[i] - center;
+            tri[i] = center + translation*((i+1.)/3.) + offset;
+        }
+    }
+
+    // perform triangle queries
+    performTriangleQueries(queryTriangles, closestPointsOnMesh, closestPointsOnTriangles, scene);
+
+    // visualize query triangles
+    std::vector<Vector<3>> triVertices;
+    std::vector<Vector3i> triIndices;
+    for (size_t i = 0; i < queryTriangles.size(); i++) {
+        int baseIdx = triVertices.size();
+        triVertices.push_back(queryTriangles[i][0]);
+        triVertices.push_back(queryTriangles[i][1]);
+        triVertices.push_back(queryTriangles[i][2]);
+        triIndices.emplace_back(Vector3i(baseIdx, baseIdx + 1, baseIdx + 2));
+    }
+    auto queryMesh = polyscope::registerSurfaceMesh("query triangles", triVertices, triIndices);
+    queryMesh->setSurfaceColor(glm::vec3{1.0f, 0.5f, 0.0f}); // orange
+    queryMesh->setTransparency(0.7);
+
+    // plot closest points
+    polyscope::registerPointCloud("closest on mesh", closestPointsOnMesh)
+        ->setPointColor(glm::vec3{0.0f, 1.0f, 0.0f}); // green
+    polyscope::registerPointCloud("closest on query", closestPointsOnTriangles)
+        ->setPointColor(glm::vec3{0.0f, 0.5f, 1.0f}); // blue
+
+    // draw edges connecting closest points
+    std::vector<Vector2i> edgeIndices;
+    std::vector<Vector<3>> edgePositions = closestPointsOnMesh;
+    edgePositions.insert(edgePositions.end(), closestPointsOnTriangles.begin(), 
+                        closestPointsOnTriangles.end());
+    for (int i = 0; i < (int)closestPointsOnMesh.size(); i++) {
+        edgeIndices.emplace_back(Vector2i(i, i + closestPointsOnMesh.size()));
+    }
+
+    auto network = polyscope::registerCurveNetwork("distance edges", edgePositions, edgeIndices);
+    network->setRadius(0.003, false);
+    network->setColor(glm::vec3{1.0f, 0.0f, 0.0f}); // red
+}
+
+template <typename T>
 void visualize(const std::vector<Vector<3>>& positions,
                const std::vector<Vector3i>& indices,
                std::vector<Vector<3>>& queryPoints,
@@ -240,7 +331,7 @@ void visualize(const std::vector<Vector<3>>& positions,
     polyscope::show();
 }
 
-void run(bool useGpu)
+void run(bool useGpu, bool useTriangleQuery)
 {
     // load obj file
     std::filesystem::path currentDirectory = std::filesystem::current_path().parent_path();
@@ -249,19 +340,33 @@ void run(bool useGpu)
     std::vector<Vector3i> indices;
     loadObj(objFilePath, positions, indices);
 
-    // generate random query points for closest point queries
+    // compute bounding box
     Vector<3> boxMin = Vector<3>::Constant(std::numeric_limits<float>::infinity());
     Vector<3> boxMax = -Vector<3>::Constant(std::numeric_limits<float>::infinity());
     for (const Vector<3>& p: positions) {
         boxMin = boxMin.cwiseMin(p);
         boxMax = boxMax.cwiseMax(p);
     }
+    Vector<3> boxExtent = boxMax - boxMin;
+    Vector<3> boxCenter = (boxMin + boxMax) * 0.5f;
 
+    // generate random query points for closest point queries
     int numQueryPoints = 100;
     std::vector<Vector<3>> queryPoints;
-    Vector<3> boxExtent = boxMax - boxMin;
     for (int i = 0; i < numQueryPoints; i++) {
         queryPoints.emplace_back(boxMin + boxExtent.cwiseProduct(uniformRealRandomVector<3>()));
+    }
+
+    // generate random query triangles for triangle-to-mesh queries
+    int numQueryTriangles = 100;
+    std::vector<std::array<Vector<3>, 3>> queryTriangles;
+    float triangleSize = boxExtent.norm() * 0.05f; // triangles are 5% of bounding box diagonal
+    for (int i = 0; i < numQueryTriangles; i++) {
+        Vector<3> center = boxCenter + boxExtent.cwiseProduct(
+            (uniformRealRandomVector<3>() - Vector<3>::Constant(0.5f)) * 0.8f);
+        Vector<3> offset1 = uniformRealRandomVector<3>().normalized() * triangleSize;
+        Vector<3> offset2 = uniformRealRandomVector<3>().normalized() * triangleSize;
+        queryTriangles.push_back({center, center + offset1, center + offset2});
     }
 
     if (useGpu) {
@@ -288,9 +393,37 @@ void run(bool useGpu)
         Scene<3> scene;
         loadFcpwScene(positions, indices, true, scene);
 
-        // visualize results
-        std::vector<Vector<3>> closestPoints;
-        visualize(positions, indices, queryPoints, closestPoints, scene);
+        if (useTriangleQuery) {
+            // visualize triangle query results
+            std::vector<Vector<3>> closestPointsOnMesh;
+            std::vector<Vector<3>> closestPointsOnTriangles;
+            
+            // set a few options
+            polyscope::options::programName = "FCPW Demo - Triangle Queries";
+            polyscope::options::verbosity = 0;
+            polyscope::options::usePrefsFile = false;
+            polyscope::options::autocenterStructures = false;
+            polyscope::options::groundPlaneMode = polyscope::GroundPlaneMode::None;
+
+            // initialize polyscope
+            polyscope::init();
+
+            // register mesh and callback
+            polyscope::registerSurfaceMesh("mesh", positions, indices);
+            polyscope::state::userCallback = std::bind(&guiCallbackTriangles<Scene<3>>, 
+                                                       std::ref(queryTriangles),
+                                                       std::ref(closestPointsOnMesh),
+                                                       std::ref(closestPointsOnTriangles), 
+                                                       std::ref(scene));
+
+            // give control to polyscope gui
+            polyscope::show();
+            
+        } else {
+            // visualize point query results
+            std::vector<Vector<3>> closestPoints;
+            visualize(positions, indices, queryPoints, closestPoints, scene);
+        }
     }
 }
 
@@ -299,6 +432,7 @@ int main(int argc, const char *argv[]) {
     args::ArgumentParser parser("fcpw demo");
     args::Group group(parser, "", args::Group::Validators::DontCare);
     args::Flag useGpu(group, "bool", "use GPU", {"useGpu"});
+    args::Flag useTriangleQuery(group, "bool", "use triangle-to-mesh queries", {"triangleQuery"});
 
     // parse args
     try {
@@ -314,7 +448,7 @@ int main(int argc, const char *argv[]) {
         return 1;
     }
 
-    run(args::get(useGpu));
+    run(args::get(useGpu), args::get(useTriangleQuery));
 
     return 0;
 }

@@ -1594,22 +1594,21 @@ inline float triangleTriangleDistance(const Vector3& a0, const Vector3& a1, cons
 
 template<size_t DIM, typename NodeType, typename PrimitiveType, typename SilhouetteType>
 inline bool Bvh<DIM, NodeType, PrimitiveType, SilhouetteType>::findClosestPointToTriangleFromNode(TriangleQuery<3>& t, Interaction<DIM>& i,
-                                                                                                  int nodeStartIndex, int aggregateIndex,
-                                                                                                  int& nodesVisited,
-                                                                                                  Vector3 *closestPointOnQueryTriangle,
-                                                                                                  bool recordNormal) const
+                                                                                                 int nodeStartIndex, int aggregateIndex,
+                                                                                                 int& nodesVisited,
+                                                                                                 Vector3 *closestPointOnQueryTriangle,
+                                                                                                 bool recordNormal) const
 {
-    static_assert(DIM == 3, "Triangle query only supported for 3D");
-
+    if constexpr (DIM == 3) {
     bool notFound = true;
     TraversalStack subtree[FCPW_BVH_MAX_DEPTH];
     float boxHits[4];
 
     int rootIndex = aggregateIndex == this->pIndex ? nodeStartIndex : 0;
-    const BoundingBox<3>& rootBox(flatTree[rootIndex].box);
+    const BoundingBox<DIM>& rootBox(flatTree[rootIndex].box);
     float d2MinRoot, d2MaxRoot;
     // Use triangle-AABB distance as pruning lower bound
-    d2MinRoot = triangleAabbMinSquaredDistance(t.a, t.b, t.c, rootBox);
+    d2MinRoot = triangleAabbMinSquaredDistance(t.a, t.b, t.c, reinterpret_cast<const BoundingBox<3>&>(rootBox));
     if (d2MinRoot <= t.r2) {
         subtree[0].node = rootIndex;
         subtree[0].distance = d2MinRoot;
@@ -1632,7 +1631,7 @@ inline bool Bvh<DIM, NodeType, PrimitiveType, SilhouetteType>::findClosestPointT
                     if (primitiveTypeIsAggregate) {
                         Interaction<DIM> c;
                         // transform handled by child aggregate implementation
-                        bool found = reinterpret_cast<const Aggregate<DIM> *>(prim)->distanceFromTriangleFromNode(
+                        bool found = reinterpret_cast<const Aggregate<DIM> *>(prim)->findClosestPointToTriangleFromNode(
                             t, c, nodeStartIndex, aggregateIndex, nodesVisited, closestPointOnQueryTriangle, recordNormal);
                         if (found) {
                             notFound = false;
@@ -1674,8 +1673,8 @@ inline bool Bvh<DIM, NodeType, PrimitiveType, SilhouetteType>::findClosestPointT
                 // internal node: compute bounds for children and push in order of increasing bound
                 int left = nodeIndex + 1;
                 int right = nodeIndex + node.secondChildOffset;
-                float d2Left = triangleAabbMinSquaredDistance(t.a, t.b, t.c, flatTree[left].box);
-                float d2Right = triangleAabbMinSquaredDistance(t.a, t.b, t.c, flatTree[right].box);
+                float d2Left = triangleAabbMinSquaredDistance(t.a, t.b, t.c, reinterpret_cast<const BoundingBox<3>&>(flatTree[left].box));
+                float d2Right = triangleAabbMinSquaredDistance(t.a, t.b, t.c, reinterpret_cast<const BoundingBox<3>&>(flatTree[right].box));
 
                 if (d2Left <= t.r2 && d2Right <= t.r2) {
                     // push farther first
@@ -1716,6 +1715,10 @@ inline bool Bvh<DIM, NodeType, PrimitiveType, SilhouetteType>::findClosestPointT
         return true;
     }
     return false;
+    } else {
+        std::cerr << "Bvh::findClosestPointToTriangleFromNode(): DIM: " << DIM << " not supported" << std::endl;
+        exit(EXIT_FAILURE);
+    }
 }
 
 } // namespace fcpw

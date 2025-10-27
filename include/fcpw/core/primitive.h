@@ -457,11 +457,11 @@ public:
 
     // distance from query triangle (DIM == 3 only)
     bool findClosestPointToTriangleFromNode(TriangleQuery<3>& t, Interaction<DIM>& i,
-                                            int nodeStartIndex, int aggregateIndex,
-                                            int& nodesVisited,
-                                            Vector3 *closestPointOnQueryTriangle=nullptr,
-                                            bool recordNormal=false) const {
-        static_assert(DIM == 3, "Triangle query only supported for 3D");
+                                           int nodeStartIndex, int aggregateIndex,
+                                           int& nodesVisited,
+                                           Vector3 *closestPointOnQueryTriangle=nullptr,
+                                           bool recordNormal=false) const {
+        if constexpr (DIM == 3) {
         // transform query triangle to object space
         TriangleQuery<3> tInv = t.transform(tInv_());
 
@@ -478,6 +478,10 @@ public:
 
         nodesVisited++;
         return found;
+        } else {
+            std::cerr << "TransformedAggregate::findClosestPointToTriangleFromNode(): DIM: " << DIM << " not supported" << std::endl;
+            exit(EXIT_FAILURE);
+        }
     }
 
     // performs inside outside test for x

@@ -1229,7 +1229,7 @@ inline bool Scene<DIM>::findClosestPointToTriangle(const Vector<3>& a, const Vec
 }
 
 template<size_t DIM>
-inline void Scene<DIM>::findClosestPointsToTriangles(const Eigen::TensorFixedSize<float, Eigen::Sizes<-1,3,3>>& triangles,
+inline void Scene<DIM>::findClosestPointsToTriangles(const Eigen::Tensor<float, 3>& triangles,
                                                     const Eigen::VectorXf& squaredMaxRadii,
                                                     std::vector<Interaction<DIM>>& interactions,
                                                     std::vector<Vector3>* qs,

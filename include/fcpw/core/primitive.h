@@ -3,6 +3,7 @@
 #include <fcpw/core/ray.h>
 #include <fcpw/core/bounding_volumes.h>
 #include <fcpw/core/interaction.h>
+#include <fcpw/core/triangle_query.h>
 
 namespace fcpw {
 
@@ -221,6 +222,19 @@ public:
         x = i.p;
     }
 
+    // finds closest point to a query triangle (only supported for DIM == 3)
+    bool findClosestPointToTriangle(TriangleQuery<3>& t, Interaction<DIM>& i,
+                                    Vector3 *closestPointOnQueryTriangle=nullptr,
+                                    bool recordNormal=false) const {
+        if constexpr (DIM != 3) {
+            std::cerr << "Aggregate::findClosestPointToTriangle(): DIM: " << DIM << " not supported" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        int nodesVisited = 0;
+        return this->findClosestPointToTriangleFromNode(t, i, 0, this->pIndex, nodesVisited,
+                                                        closestPointOnQueryTriangle, recordNormal);
+    }
+
     // refits the aggregate
     virtual void refit() = 0;
 
@@ -261,6 +275,17 @@ public:
                                                     int& nodesVisited, bool flipNormalOrientation=false,
                                                     float squaredMinRadius=0.0f, float precision=1e-3f,
                                                     bool recordNormal=false) const = 0;
+
+    // closest point to query triangle (only for DIM == 3). Default: error.
+    virtual bool findClosestPointToTriangleFromNode(TriangleQuery<3>& t, Interaction<DIM>& i,
+                                                    int nodeStartIndex, int aggregateIndex,
+                                                    int& nodesVisited,
+                                                    Vector3 *closestPointOnQueryTriangle=nullptr,
+                                                    bool recordNormal=false) const {
+        std::cerr << "Aggregate::findClosestPointToTriangleFromNode(): DIM: " << DIM << " not supported" << std::endl;
+        exit(EXIT_FAILURE);
+        return false;
+    }
 
     // get and set index
     int getIndex() const { return pIndex; }
@@ -430,6 +455,31 @@ public:
         return found;
     }
 
+    // distance from query triangle (DIM == 3 only)
+    bool findClosestPointToTriangleFromNode(TriangleQuery<3>& t, Interaction<DIM>& i,
+                                            int nodeStartIndex, int aggregateIndex,
+                                            int& nodesVisited,
+                                            Vector3 *closestPointOnQueryTriangle=nullptr,
+                                            bool recordNormal=false) const {
+        static_assert(DIM == 3, "Triangle query only supported for 3D");
+        // transform query triangle to object space
+        TriangleQuery<3> tInv = t.transform(tInv_());
+
+        // run distance query in object space
+        bool found = aggregate->findClosestPointToTriangleFromNode(tInv, i, nodeStartIndex, aggregateIndex,
+                                                                   nodesVisited, closestPointOnQueryTriangle, recordNormal);
+
+        // apply transform back to interaction
+        if (found) {
+            // Recompute distance in world space using transformed closest point
+            Vector3 queryCentroid = t.centroid();
+            i.applyTransform(t_(), tInv_(), queryCentroid);
+        }
+
+        nodesVisited++;
+        return found;
+    }
+
     // performs inside outside test for x
     bool contains(const Vector<DIM>& x, bool useRayIntersection=true) const {
         return aggregate->contains(tInv*x, useRayIntersection);
@@ -460,6 +510,10 @@ private:
     std::shared_ptr<Aggregate<DIM>> aggregate;
     Transform<DIM> t, tInv;
     float det, sqrtDet;
+
+    // helpers to avoid shadowing member names in templated static_assert contexts
+    inline const Transform<DIM>& t_() const { return t; }
+    inline const Transform<DIM>& tInv_() const { return tInv; }
 };
 
 } // namespace fcpw

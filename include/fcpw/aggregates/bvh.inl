@@ -1,3 +1,4 @@
+#include <fcpw/geometry/triangles.h>
 namespace fcpw {
 
 template<size_t DIM, typename NodeType, typename PrimitiveType, typename SilhouetteType>
@@ -1468,6 +1469,252 @@ inline bool Bvh<DIM, NodeType, PrimitiveType, SilhouetteType>::findClosestSilhou
         return true;
     }
 
+    return false;
+}
+
+// triangle-AABB lower bound distance (min squared distance), DIM == 3 only
+inline float triangleAabbMinSquaredDistance(const Vector3& a, const Vector3& b, const Vector3& c,
+                                            const BoundingBox<3>& box)
+{
+    // Use lower bound via distance between the triangle's AABB and the node's AABB (safe pruning bound)
+    BoundingBox<3> triBox;
+    triBox.expandToInclude(a);
+    triBox.expandToInclude(b);
+    triBox.expandToInclude(c);
+
+    auto axisDist2 = [](float minA, float maxA, float minB, float maxB) {
+        if (maxA < minB) {
+            float d = minB - maxA; return d*d;
+        } else if (maxB < minA) {
+            float d = minA - maxB; return d*d;
+        }
+        return 0.0f;
+    };
+
+    float dx2 = axisDist2(triBox.pMin[0], triBox.pMax[0], box.pMin[0], box.pMax[0]);
+    float dy2 = axisDist2(triBox.pMin[1], triBox.pMax[1], box.pMin[1], box.pMax[1]);
+    float dz2 = axisDist2(triBox.pMin[2], triBox.pMax[2], box.pMin[2], box.pMax[2]);
+    return dx2 + dy2 + dz2;
+}
+
+// triangle-triangle distance: returns min distance and closest point on mesh triangle in pm, and on query triangle in pq
+inline float triangleTriangleDistance(const Vector3& a0, const Vector3& a1, const Vector3& a2,
+                                      const Vector3& b0, const Vector3& b1, const Vector3& b2,
+                                      Vector3& pm, Vector3& pq, Vector2& uvMesh)
+{
+    // Use standard approach: check
+    // - vertex of A to triangle B
+    // - vertex of B to triangle A
+    // - edge-edge distances for all pairs
+    // And keep the minimum.
+    auto pointTriangle = [&](const Vector3& p, const Vector3& ta, const Vector3& tb, const Vector3& tc,
+                             Vector3& cp, Vector2& uv) {
+        // reuse existing helper for mesh triangle closest point if available
+        // Use findClosestPointTriangle(pa, pb, pc, x, pt, t) from triangles.inl signature: returns distance
+        Vector3 pt;
+        Vector2 t;
+        float d = findClosestPointTriangle(ta, tb, tc, p, pt, t);
+        cp = pt;
+        uv = t;
+        return d;
+    };
+
+    auto segmentSegment = [&](const Vector3& p0, const Vector3& p1, const Vector3& q0, const Vector3& q1, Vector3& cpP, Vector3& cpQ) {
+        // RTCD segment-segment closest points
+        Vector3 u = p1 - p0;
+        Vector3 v = q1 - q0;
+        Vector3 w0 = p0 - q0;
+        float a = u.dot(u);
+        float b = u.dot(v);
+        float c = v.dot(v);
+        float d = u.dot(w0);
+        float e = v.dot(w0);
+        float D = a*c - b*b;
+        float sc, sN, sD = D;
+        float tc, tN, tD = D;
+
+        const float EPS = 1e-20f;
+        if (D < EPS) {
+            sN = 0.0f; sD = 1.0f; tN = e; tD = c;
+        } else {
+            sN = (b*e - c*d);
+            tN = (a*e - b*d);
+            if (sN < 0.0f) { sN = 0.0f; tN = e; tD = c; }
+            else if (sN > sD) { sN = sD; tN = e + b; tD = c; }
+        }
+        if (tN < 0.0f) { tN = 0.0f; if (-d < 0.0f) sN = 0.0f; else if (-d > a) sN = sD; else { sN = -d; sD = a; } }
+        else if (tN > tD) { tN = tD; if ((-d + b) < 0.0f) sN = 0.0f; else if ((-d + b) > a) sN = sD; else { sN = (-d + b); sD = a; } }
+
+        sc = (std::abs(sN) < EPS ? 0.0f : sN / sD);
+        tc = (std::abs(tN) < EPS ? 0.0f : tN / tD);
+
+        cpP = p0 + u*sc;
+        cpQ = q0 + v*tc;
+        return (cpP - cpQ).norm();
+    };
+
+    float best = maxFloat;
+    Vector3 bestPm = Vector3::Zero(), bestPq = Vector3::Zero();
+    Vector2 bestUv = Vector2::Zero();
+
+    // A vertices to B
+    {
+        Vector3 cp; Vector2 uv; float d = pointTriangle(a0, b0, b1, b2, cp, uv);
+        if (d < best) { best = d; bestPm = cp; bestPq = a0; bestUv = uv; if (best == 0.0f) { pm = bestPm; pq = bestPq; uvMesh = bestUv; return 0.0f; } }
+        d = pointTriangle(a1, b0, b1, b2, cp, uv);
+        if (d < best) { best = d; bestPm = cp; bestPq = a1; bestUv = uv; if (best == 0.0f) { pm = bestPm; pq = bestPq; uvMesh = bestUv; return 0.0f; } }
+        d = pointTriangle(a2, b0, b1, b2, cp, uv);
+        if (d < best) { best = d; bestPm = cp; bestPq = a2; bestUv = uv; if (best == 0.0f) { pm = bestPm; pq = bestPq; uvMesh = bestUv; return 0.0f; } }
+    }
+
+    // B vertices to A
+    {
+        Vector3 cp; Vector2 uv; float d = pointTriangle(b0, a0, a1, a2, cp, uv);
+        if (d < best) { best = d; bestPm = b0; bestPq = cp; /* uv on mesh is from A here, but our mesh is B in this call; keep bestUv as zero */ }
+        d = pointTriangle(b1, a0, a1, a2, cp, uv);
+        if (d < best) { best = d; bestPm = b1; bestPq = cp; }
+        d = pointTriangle(b2, a0, a1, a2, cp, uv);
+        if (d < best) { best = d; bestPm = b2; bestPq = cp; }
+    }
+
+    // edge-edge
+    const Vector3 A[3] = {a0, a1, a2};
+    const Vector3 B[3] = {b0, b1, b2};
+    for (int i = 0; i < 3; ++i) {
+        Vector3 ap0 = A[i]; Vector3 ap1 = A[(i+1)%3];
+        for (int j = 0; j < 3; ++j) {
+            Vector3 bp0 = B[j]; Vector3 bp1 = B[(j+1)%3];
+            Vector3 ca, cb; float d = segmentSegment(ap0, ap1, bp0, bp1, ca, cb);
+            if (d < best) { best = d; bestPm = cb; bestPq = ca; }
+        }
+    }
+
+    pm = bestPm; pq = bestPq; uvMesh = bestUv; return best;
+}
+
+template<size_t DIM, typename NodeType, typename PrimitiveType, typename SilhouetteType>
+inline bool Bvh<DIM, NodeType, PrimitiveType, SilhouetteType>::findClosestPointToTriangleFromNode(TriangleQuery<3>& t, Interaction<DIM>& i,
+                                                                                                  int nodeStartIndex, int aggregateIndex,
+                                                                                                  int& nodesVisited,
+                                                                                                  Vector3 *closestPointOnQueryTriangle,
+                                                                                                  bool recordNormal) const
+{
+    static_assert(DIM == 3, "Triangle query only supported for 3D");
+
+    bool notFound = true;
+    TraversalStack subtree[FCPW_BVH_MAX_DEPTH];
+    float boxHits[4];
+
+    int rootIndex = aggregateIndex == this->pIndex ? nodeStartIndex : 0;
+    const BoundingBox<3>& rootBox(flatTree[rootIndex].box);
+    float d2MinRoot, d2MaxRoot;
+    // Use triangle-AABB distance as pruning lower bound
+    d2MinRoot = triangleAabbMinSquaredDistance(t.a, t.b, t.c, rootBox);
+    if (d2MinRoot <= t.r2) {
+        subtree[0].node = rootIndex;
+        subtree[0].distance = d2MinRoot;
+
+        int stackPtr = 0;
+        while (stackPtr >= 0) {
+            int nodeIndex = subtree[stackPtr].node;
+            float currentBound = subtree[stackPtr].distance;
+            stackPtr--;
+
+            if (currentBound > t.r2) continue;
+            const NodeType& node(flatTree[nodeIndex]);
+
+            if (node.nReferences > 0) {
+                for (int p = 0; p < node.nReferences; p++) {
+                    int referenceIndex = node.referenceOffset + p;
+                    const PrimitiveType *prim = primitives[referenceIndex];
+                    nodesVisited++;
+
+                    if (primitiveTypeIsAggregate) {
+                        Interaction<DIM> c;
+                        // transform handled by child aggregate implementation
+                        bool found = reinterpret_cast<const Aggregate<DIM> *>(prim)->distanceFromTriangleFromNode(
+                            t, c, nodeStartIndex, aggregateIndex, nodesVisited, closestPointOnQueryTriangle, recordNormal);
+                        if (found) {
+                            notFound = false;
+                            t.r2 = std::min(t.r2, c.d*c.d);
+                            i = c;
+                        }
+                    } else {
+                        // primitive assumed Triangle
+                        const GeometricPrimitive<DIM> *geometricPrim = reinterpret_cast<const GeometricPrimitive<DIM> *>(prim);
+                        const Triangle *triangle = reinterpret_cast<const Triangle *>(geometricPrim);
+                        const Vector3& pa = triangle->soup->positions[triangle->indices[0]];
+                        const Vector3& pb = triangle->soup->positions[triangle->indices[1]];
+                        const Vector3& pc = triangle->soup->positions[triangle->indices[2]];
+
+                        Vector3 pm, pq; Vector2 uv;
+                        float d = triangleTriangleDistance(pa, pb, pc, t.a, t.b, t.c, pm, pq, uv);
+                        float d2 = d*d;
+                        if (d2 <= t.r2) {
+                            notFound = false;
+                            t.r2 = d2;
+                            i.d = d;
+                            i.p = pm;
+                            i.primitiveIndex = triangle->getIndex();
+                            i.nodeIndex = nodeIndex;
+                            i.referenceIndex = referenceIndex;
+                            i.objectIndex = this->pIndex;
+                            if (recordNormal) {
+                                i.n = (pb - pa).cross(pc - pa).normalized();
+                            }
+                            i.uv = uv;
+                            if (closestPointOnQueryTriangle) {
+                                *closestPointOnQueryTriangle = pq;
+                            }
+                        }
+                    }
+                }
+
+            } else {
+                // internal node: compute bounds for children and push in order of increasing bound
+                int left = nodeIndex + 1;
+                int right = nodeIndex + node.secondChildOffset;
+                float d2Left = triangleAabbMinSquaredDistance(t.a, t.b, t.c, flatTree[left].box);
+                float d2Right = triangleAabbMinSquaredDistance(t.a, t.b, t.c, flatTree[right].box);
+
+                if (d2Left <= t.r2 && d2Right <= t.r2) {
+                    // push farther first
+                    if (d2Right < d2Left) {
+                        stackPtr++;
+                        subtree[stackPtr].node = left;
+                        subtree[stackPtr].distance = d2Left;
+                        stackPtr++;
+                        subtree[stackPtr].node = right;
+                        subtree[stackPtr].distance = d2Right;
+                    } else {
+                        stackPtr++;
+                        subtree[stackPtr].node = right;
+                        subtree[stackPtr].distance = d2Right;
+                        stackPtr++;
+                        subtree[stackPtr].node = left;
+                        subtree[stackPtr].distance = d2Left;
+                    }
+                } else if (d2Left <= t.r2) {
+                    stackPtr++;
+                    subtree[stackPtr].node = left;
+                    subtree[stackPtr].distance = d2Left;
+                } else if (d2Right <= t.r2) {
+                    stackPtr++;
+                    subtree[stackPtr].node = right;
+                    subtree[stackPtr].distance = d2Right;
+                }
+
+                nodesVisited++;
+            }
+        }
+    }
+
+    if (!notFound) {
+        if (recordNormal && !primitiveTypeIsAggregate) {
+            // normal already set above when primitiveTypeIsAggregate == false; nothing else to do
+        }
+        return true;
+    }
     return false;
 }
 

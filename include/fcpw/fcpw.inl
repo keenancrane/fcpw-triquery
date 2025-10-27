@@ -1216,6 +1216,62 @@ inline bool Scene<DIM>::findClosestSilhouettePoint(const Vector<DIM>& x, Interac
 }
 
 template<size_t DIM>
+inline bool Scene<DIM>::findClosestPointToTriangle(const Vector<3>& a, const Vector<3>& b, const Vector<3>& c,
+                                                  Interaction<DIM>& i, Vector3 *q,
+                                                  float squaredMaxRadius, bool recordNormal) const
+{
+    if constexpr (DIM != 3) {
+        std::cerr << "Scene::findClosestPointToTriangle(): DIM: " << DIM << " not supported" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    TriangleQuery<3> t(a, b, c, squaredMaxRadius);
+    return sceneData->aggregate->findClosestPointToTriangle(t, i, q, recordNormal);
+}
+
+template<size_t DIM>
+inline void Scene<DIM>::findClosestPointsToTriangles(const Eigen::TensorFixedSize<float, Eigen::Sizes<-1,3,3>>& triangles,
+                                                    const Eigen::VectorXf& squaredMaxRadii,
+                                                    std::vector<Interaction<DIM>>& interactions,
+                                                    std::vector<Vector3>* qs,
+                                                    bool recordNormal) const
+{
+    if constexpr (DIM != 3) {
+        std::cerr << "Scene::findClosestPointsToTriangles(): DIM: " << DIM << " not supported" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    int nQueries = (int)triangles.dimension(0);
+    interactions.clear();
+    interactions.resize(nQueries);
+    if (qs) { qs->clear(); qs->resize(nQueries); }
+
+    auto callback = [&](int start, int end) {
+        for (int iQ = start; iQ < end; iQ++) {
+            Vector3 a(triangles(iQ, 0, 0), triangles(iQ, 0, 1), triangles(iQ, 0, 2));
+            Vector3 b(triangles(iQ, 1, 0), triangles(iQ, 1, 1), triangles(iQ, 1, 2));
+            Vector3 c(triangles(iQ, 2, 0), triangles(iQ, 2, 1), triangles(iQ, 2, 2));
+            TriangleQuery<3> t(a, b, c, squaredMaxRadii(iQ));
+            if (qs) sceneData->aggregate->findClosestPointToTriangle(t, interactions[iQ], &(*qs)[iQ], recordNormal);
+            else sceneData->aggregate->findClosestPointToTriangle(t, interactions[iQ], nullptr, recordNormal);
+        }
+    };
+
+    int nThreads = std::thread::hardware_concurrency();
+    int nQueriesPerThread = nQueries/nThreads;
+    std::vector<std::thread> threads;
+
+    for (int iT = 0; iT < nThreads; iT++) {
+        int start = iT*nQueriesPerThread;
+        int end = (iT == nThreads - 1) ? nQueries : (iT + 1)*nQueriesPerThread;
+        threads.emplace_back(callback, start, end);
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+}
+
+template<size_t DIM>
 inline void Scene<DIM>::intersect(const Eigen::MatrixXf& rayOrigins,
                                   const Eigen::MatrixXf& rayDirections,
                                   const Eigen::VectorXf& rayDistanceBounds,

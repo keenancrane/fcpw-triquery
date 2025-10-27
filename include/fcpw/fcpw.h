@@ -160,6 +160,22 @@ public:
                                     bool recordNormal=false) const;
 
     /////////////////////////////////////////////////////////////////////////////////////////////
+    // API to perform triangle-to-mesh closest-point queries (DIM == 3 only)
+
+    // finds closest point on mesh to a query triangle; optionally also returns
+    // closest point on the query triangle via out parameter q; optional squaredMaxRadius bound.
+    bool findClosestPointToTriangle(const Vector<3>& a, const Vector<3>& b, const Vector<3>& c,
+                                    Interaction<DIM>& i, Vector3 *q=nullptr,
+                                    float squaredMaxRadius=maxFloat, bool recordNormal=false) const;
+
+    // batched version: triangles is an Nx3x3 matrix (rows: triangles, 3 vertices each)
+    void findClosestPointsToTriangles(const Eigen::TensorFixedSize<float, Eigen::Sizes<-1,3,3>>& triangles,
+                                      const Eigen::VectorXf& squaredMaxRadii,
+                                      std::vector<Interaction<DIM>>& interactions,
+                                      std::vector<Vector3>* qs=nullptr,
+                                      bool recordNormal=false) const;
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
     // API to perform bundled ray intersection and distance queries to the scene
     // NOTE: the functions below use std::thread internally to parallelize queries, however
     // using Intel TBB can give up to a 2x speedup if applied directly to the query API above

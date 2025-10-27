@@ -402,7 +402,31 @@ NB_MODULE(py, m) {
             &fcpw::Scene<3>::findClosestSilhouettePoints, nb::const_),
             "Finds the closest points on the visibility silhouette in the scene to the given query points, encoded as bounding spheres.\nOptionally specify a minimum radius to stop the closest silhouette search, as well as a precision parameter to help classify silhouettes.",
             "bounding_spheres"_a, "interactions"_a, "flip_normal_orientation"_a,
-            "squared_min_radius"_a=0.0f, "precision"_a=1e-3f, "record_normal"_a=false);
+            "squared_min_radius"_a=0.0f, "precision"_a=1e-3f, "record_normal"_a=false)
+        .def("find_closest_point_to_triangle",
+            [](const fcpw::Scene<3>& self, const fcpw::Vector<3>& a, const fcpw::Vector<3>& b, const fcpw::Vector<3>& c,
+               fcpw::Interaction<3>& i, nb::object qOpt, float squaredMaxRadius, bool recordNormal) {
+                fcpw::Vector3 q;
+                fcpw::Vector3* qPtr = nullptr;
+                if (!qOpt.is_none()) qPtr = &q;
+                bool found = self.findClosestPointToTriangle(a, b, c, i, qPtr, squaredMaxRadius, recordNormal);
+                if (found && qPtr) return nb::make_tuple(true, q);
+                return nb::make_tuple(found, fcpw::Vector3::Zero());
+            },
+            "Computes closest point on mesh to a query triangle. Optionally returns closest point on query triangle.",
+            "a"_a, "b"_a, "c"_a, "i"_a, "q"_a.none()=nb::none(), "squared_max_radius"_a=fcpw::maxFloat, "record_normal"_a=false)
+        .def("find_closest_points_to_triangles",
+            [](const fcpw::Scene<3>& self, nb::tensor<nb::numpy, float, nb::shape<-1,3,3>> triangles,
+               const Eigen::VectorXf& squaredMaxRadii, Interaction3DList& interactions, nb::object qsOpt, bool recordNormal) {
+                std::vector<fcpw::Vector3> qs;
+                std::vector<fcpw::Vector3>* qsPtr = nullptr;
+                if (!qsOpt.is_none()) qsPtr = &qs;
+                self.findClosestPointsToTriangles(triangles, squaredMaxRadii, interactions, qsPtr, recordNormal);
+                if (qsPtr) return nb::make_tuple(interactions, qs);
+                return nb::make_tuple(interactions, std::vector<fcpw::Vector3>());
+            },
+            "Batched triangle-to-mesh queries. Triangles tensor shape [N,3,3]. Optionally returns closest points on query triangles.",
+            "triangles"_a, "squared_max_radii"_a, "interactions"_a, "qs"_a.none()=nb::none(), "record_normal"_a=false);
 
 #ifdef FCPW_USE_GPU
     nb::class_<fcpw::float2>(m, "gpu_float_2D")

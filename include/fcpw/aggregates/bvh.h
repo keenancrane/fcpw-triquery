@@ -132,6 +132,13 @@ public:
                                             float squaredMinRadius=0.0f, float precision=1e-3f,
                                             bool recordNormal=false) const;
 
+    // closest point to query triangle (DIM == 3 only)
+    bool findClosestPointToTriangleFromNode(TriangleQuery<3>& t, Interaction<DIM>& i,
+                                            int nodeStartIndex, int aggregateIndex,
+                                            int& nodesVisited,
+                                            Vector3 *closestPointOnQueryTriangle=nullptr,
+                                            bool recordNormal=false) const;
+
 protected:
     // computes split cost based on heuristic
     float computeSplitCost(const BoundingBox<DIM>& boxLeft,
